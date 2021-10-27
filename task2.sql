@@ -29,13 +29,13 @@ SELECT h.ID,
 FROM KOTLYAROV_DM.HOSPITALS h
          INNER JOIN KOTLYAROV_DM.doctors d on d.id_hospital = h.id
          INNER JOIN KOTLYAROV_DM.doctor_specialty ds on d.id = ds.id_doctor
-         INNER JOIN KOTLYAROV_DM.specialities s on ds.id_speciality = s.id
+         INNER JOIN KOTLYAROV_DM.specialities s on ds.id_speciality = s.id AND s.ID = 1
          INNER JOIN KOTLYAROV_DM.HOSPITAL_WORK_TIMES hwt on h.ID = hwt.id_hospital
-WHERE s.id = 1
-  AND h.deleted_at IS NULL
+WHERE h.deleted_at IS NULL
   AND h.status <> 0
+  AND hwt.END_TIME > to_char(systimestamp, 'hh24:mi')
 GROUP BY hwt.END_TIME, h.id_type, h.id, h.NAME, h.id_organization, h.STATUS
-ORDER BY h.id_type DESC, doc_count DESC, hwt.END_TIME DESC
+ORDER BY case when h.id_type = 1 then 1 else 0 end, doc_count DESC, hwt.END_TIME DESC
 ;
 
 -- Выдать всех врачей (неудаленных) конкретной больницы,
@@ -45,12 +45,12 @@ SELECT d.ID, d.DELETED_AT, d.AREA, d.DEGREE, d.id_hospital
 FROM KOTLYAROV_DM.DOCTORS d
          INNER JOIN hospitals h on d.id_hospital = h.id
 WHERE d.deleted_at IS NULL
-ORDER BY d.degree, CASE WHEN d.area = 'area2' THEN 1 ELSE 0 END
+ORDER BY d.degree desc, CASE WHEN d.area = 'area 2' THEN 1 ELSE 0 END
 ;
 
 -- Выдать все талоны конкретного врача (1), не показывать талоны которые начались раньше текущего времени
 SELECT *
 FROM KOTLYAROV_DM.TICKETS t
-WHERE t.id_doctor = 1
-  AND t.TIME_BEGIN > current_date
+INNER JOIN DOCTOR_SPECIALTY ds on t.ID_DOCTOR_SPECIALITY = ds.id and ds.ID_DOCTOR = 1
+WHERE t.TIME_BEGIN > current_date
 ;

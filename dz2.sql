@@ -8,9 +8,9 @@ begin
     into v_count
     from KOTLYAROV_DM.TICKETS t
              INNER JOIN KOTLYAROV_DM.PATIENTS p on p.ID = v_id_patient
-             INNER JOIN KOTLYAROV_DM.SPECIALITIES s on s.ID = t.ID_SPECIALITY
-             INNER JOIN AGE_GROUPS ag on ag.ID = s.ID_AGE_GROUP
-             INNER JOIN SPECIALITY_GENDER sg on s.ID = sg.ID_SPECIALITY
+             INNER JOIN KOTLYAROV_DM.SPECIALITIES s on s.ID = t.ID_DOCTOR_SPECIALITY
+             INNER JOIN KOTLYAROV_DM.AGE_GROUPS ag on ag.ID = s.ID_AGE_GROUP
+             INNER JOIN KOTLYAROV_DM.SPECIALITY_GENDER sg on s.ID = sg.ID_SPECIALITY
     WHERE t.id = v_id_ticket
       AND p.ID_GENDER = sg.ID_GENDER
       AND add_months(p.BIRTHDATE, ag.AGE_BEGIN * 12) <= current_date
@@ -48,7 +48,7 @@ begin
     select *
     into v_speciality
     from KOTLYAROV_DM.SPECIALITIES
-    where id = v_ticket.ID_SPECIALITY;
+    where id = v_ticket.ID_DOCTOR_SPECIALITY;
 
     select *
     into v_age_group
@@ -128,8 +128,6 @@ end;
 
 -- Заведите заранее переменные даты. создайте выборку между датами, за сегодня. в день за неделю назад. сделайте тоже самое но через преобразрование даты из строки
 declare
-    v_date            date;
-    v_date_end        date;
     v_date_string     varchar2(255);
     v_date_end_string varchar2(255);
 
@@ -138,40 +136,20 @@ declare
 begin
 
     -- Today
-    v_date := current_date;
-
     select * bulk collect
     into a_tickets
     from KOTLYAROV_DM.TICKETS
-    where trunc(TIME_BEGIN) >= trunc(v_date)
-      and trunc(TIME_BEGIN) < trunc(v_date + 1);
+    where trunc(TIME_BEGIN) = trunc(sysdate);
 
-    DBMS_OUTPUT.PUT_LINE('Rows count : ' || sql%ROWCOUNT);
-
+    DBMS_OUTPUT.PUT_LINE('Rows count : ' || a_tickets.count);
 
     -- 1 day week before
-    v_date := current_date - 7;
-
     select * bulk collect
     into a_tickets
     from KOTLYAROV_DM.TICKETS
-    where trunc(TIME_BEGIN) >= trunc(v_date)
-      and trunc(TIME_BEGIN) < trunc(v_date + 1);
+    where trunc(TIME_BEGIN) >= trunc(sysdate - 7);
 
-    DBMS_OUTPUT.PUT_LINE('Rows count : ' || sql%ROWCOUNT);
-
-
-    -- In next month
-    v_date := add_months(current_date, 1);
-    v_date_end := add_months(current_date, 2);
-
-    select * bulk collect
-    into a_tickets
-    from KOTLYAROV_DM.TICKETS
-    where trunc(TIME_BEGIN) >= trunc(v_date)
-      and trunc(TIME_BEGIN) < trunc(v_date_end);
-
-    DBMS_OUTPUT.PUT_LINE('Rows count : ' || sql%ROWCOUNT);
+    DBMS_OUTPUT.PUT_LINE('Rows count : ' || a_tickets.count);
 
 
     -- With conversion from string
@@ -184,7 +162,7 @@ begin
     where trunc(TIME_BEGIN) >= trunc(TO_DATE(v_date_string, 'dd.mm.yyyy hh24:mi:ss'))
       and trunc(TIME_BEGIN) < trunc(TO_DATE(v_date_end_string, 'dd.mm.yyyy hh24:mi:ss') + 1);
 
-    DBMS_OUTPUT.PUT_LINE('Rows count : ' || sql%ROWCOUNT);
+    DBMS_OUTPUT.PUT_LINE('Rows count : ' || a_tickets.count);
 end;
 
 -- Заведите заранее переменную типа строки. создайте выборку забирающуюю ровну одну строку. выведите в консоль результат
@@ -209,7 +187,9 @@ begin
     into a_regions
     from KOTLYAROV_DM.regions;
 
-    for i in 1..a_regions.count loop
-        DBMS_OUTPUT.PUT_LINE('id ' || a_regions(i).id || ', name ' || a_regions(i).name || ', code ' || a_regions(i).code);
-    end loop;
+    for i in a_regions.first..a_regions.last
+        loop
+            DBMS_OUTPUT.PUT_LINE('id ' || a_regions(i).id || ', name ' || a_regions(i).name || ', code ' ||
+                                 a_regions(i).code);
+        end loop;
 end;
