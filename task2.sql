@@ -41,7 +41,7 @@ ORDER BY case when h.id_type = 1 then 1 else 0 end, doc_count DESC, hwt.END_TIME
 -- Выдать всех врачей (неудаленных) конкретной больницы,
 -- отсортировать по квалификации: у кого есть выше,
 -- по участку: если участок совпадает с участком пациента, то такие выше
-SELECT d.ID, d.DELETED_AT, d.AREA, d.DEGREE, d.id_hospital
+SELECT d.*
 FROM KOTLYAROV_DM.DOCTORS d
          INNER JOIN hospitals h on d.id_hospital = h.id
 WHERE d.deleted_at IS NULL
@@ -49,7 +49,7 @@ ORDER BY d.degree desc, CASE WHEN d.area = 'area 2' THEN 1 ELSE 0 END
 ;
 
 -- Выдать все талоны конкретного врача (1), не показывать талоны которые начались раньше текущего времени
-SELECT *
+SELECT t.*
 FROM KOTLYAROV_DM.TICKETS t
 INNER JOIN DOCTOR_SPECIALTY ds on t.ID_DOCTOR_SPECIALITY = ds.id and ds.ID_DOCTOR = 1
 WHERE t.TIME_BEGIN > current_date
