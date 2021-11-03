@@ -320,3 +320,149 @@ begin
     close v_patient_journald_cursor;
 end;
 
+
+-- Создать метод записи с проверками пациента
+--    на соответствие всем пунктам для записи
+create or replace function request(
+    p_id_patient number,
+    p_id_ticket number
+)
+    return boolean
+as
+    v_count number;
+begin
+    select count(*)
+    into v_count
+    from KOTLYAROV_DM.PATIENT_JOURNALS
+    where ID_PATIENT = p_id_patient
+      and ID_TICKET = p_id_ticket
+      and STATUS = 0;
+
+    if (v_count != 0) then
+        return false;
+    end if;
+
+    select count(t.ID)
+    into v_count
+    from KOTLYAROV_DM.TICKETS t
+             INNER JOIN KOTLYAROV_DM.PATIENTS p on p.ID = p_id_patient
+             INNER JOIN KOTLYAROV_DM.DOCTOR_SPECIALTY ds on ds.ID = t.ID_DOCTOR_SPECIALITY
+             INNER JOIN KOTLYAROV_DM.SPECIALITIES s on s.ID = ds.ID_SPECIALITY
+             INNER JOIN KOTLYAROV_DM.DOCTORS d on d.ID = ds.ID_DOCTOR
+             INNER JOIN KOTLYAROV_DM.HOSPITALS h on h.ID = d.ID_HOSPITAL
+             INNER JOIN KOTLYAROV_DM.AGE_GROUPS ag on ag.ID = s.ID_AGE_GROUP
+             INNER JOIN KOTLYAROV_DM.SPECIALITY_GENDER sg on sg.ID_SPECIALITY = s.ID
+             INNER JOIN KOTLYAROV_DM.PATIENT_DOCUMENTS pd on pd.ID_PATIENT = p_id_patient
+    WHERE t.id = p_id_ticket
+      and t.CLOSED = 0
+      AND p.ID_GENDER = sg.ID_GENDER
+      and t.TIME_BEGIN > sysdate
+      and d.DELETED_AT is null
+      and s.DELETED_AT is null
+      and h.DELETED_AT is null
+      and pd.ID_DOCUMENT_TYPE = 4 -- ОМС
+      AND add_months(p.BIRTHDATE, ag.AGE_BEGIN * 12) <= sysdate
+      AND add_months(p.BIRTHDATE, ag.AGE_END * 12) > sysdate;
+
+    if (v_count = 1) then
+        -- status 0 = OK, 1 = cancelled
+        merge into KOTLYAROV_DM.PATIENT_JOURNALS pj
+        using (
+            select *
+            from KOTLYAROV_DM.PATIENT_JOURNALS
+        ) match
+        on (pj.ID_PATIENT = match.ID_PATIENT and pj.ID_TICKET = match.ID_TICKET)
+        when not matched then
+            insert (ID_PATIENT, ID_TICKET) VALUES (p_id_patient, p_id_ticket)
+        when matched then
+            update set pj.STATUS = 0;
+
+        update KOTLYAROV_DM.TICKETS set CLOSED = 1 where id = p_id_ticket;
+        commit;
+
+        return true;
+    end if;
+
+    return false;
+end;
+
+declare
+    v_result boolean;
+begin
+    v_result := KOTLYAROV_DM.REQUEST(
+            p_id_patient => 4,
+            p_id_ticket => 2480
+        );
+
+    if (v_result) then
+        DBMS_OUTPUT.PUT_LINE('All ok');
+    else
+        DBMS_OUTPUT.PUT_LINE('Patient not suitable for this ticket');
+    end if;
+end;
+
+
+-- Пишем функцию отмены записи
+create or replace function cancel(
+    p_id_patient number,
+    p_id_ticket number
+)
+    return boolean
+as
+    v_count number;
+begin
+    select count(*)
+    into v_count
+    from KOTLYAROV_DM.PATIENT_JOURNALS
+    where ID_PATIENT = p_id_patient
+      and ID_TICKET = p_id_ticket
+      and STATUS = 0;
+
+    if (v_count != 1) then
+        return false;
+    end if;
+
+    select count(*)
+    into v_count
+    from KOTLYAROV_DM.TICKETS t
+             INNER JOIN KOTLYAROV_DM.DOCTOR_SPECIALTY ds on ds.ID = t.ID_DOCTOR_SPECIALITY
+             INNER JOIN KOTLYAROV_DM.SPECIALITIES s on s.ID = ds.ID_SPECIALITY
+             INNER JOIN KOTLYAROV_DM.DOCTORS d on d.ID = ds.ID_DOCTOR
+             INNER JOIN KOTLYAROV_DM.HOSPITAL_WORK_TIMES wt on wt.ID_HOSPITAL = d.ID_HOSPITAL
+    where t.TIME_BEGIN > sysdate
+      and t.id = p_id_ticket
+      and wt.ID_WEEK_DAY = to_number(to_char(sysdate, 'D'))
+      and wt.END_TIME > to_char(sysdate - ((1 / 24) * 2), 'hh24:mi');
+
+    if (v_count != 1) then
+        return false;
+    end if;
+
+    update KOTLYAROV_DM.PATIENT_JOURNALS
+    set STATUS = 1
+    where ID_PATIENT = p_id_patient
+      and ID_TICKET = p_id_ticket;
+
+    update KOTLYAROV_DM.TICKETS
+    set CLOSED = 0
+    where id = p_id_ticket;
+
+    commit;
+
+    return true;
+end;
+
+declare
+    v_result boolean;
+begin
+    v_result := KOTLYAROV_DM.CANCEL(
+            p_id_patient => 4,
+            p_id_ticket => 2480
+        );
+
+    if (v_result) then
+        DBMS_OUTPUT.PUT_LINE('All ok');
+    else
+        DBMS_OUTPUT.PUT_LINE('Error cancelling');
+    end if;
+end;
