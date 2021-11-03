@@ -1,23 +1,25 @@
 -- Выдать все города по регионам
 declare
-    v_data     KOTLYAROV_DM.REGIONS%rowtype;
-    cursor v_cursor (p_id_region number := null)
-        return KOTLYAROV_DM.REGIONS%rowtype
+    v_data     KOTLYAROV_DM.TOWNS%rowtype;
+    cursor towns_by_region (p_id_region number := null)
+        return KOTLYAROV_DM.TOWNS%rowtype
         is
         SELECT *
-        FROM KOTLYAROV_DM.REGIONS
-        where ID = case when p_id_region is null then ID else p_id_region end;
+        FROM KOTLYAROV_DM.TOWNS
+        where (p_id_region is not null and p_id_region = id)
+           or (p_id_region is null)
+    ;
 begin
-    --     open v_cursor_1(1);
-    open v_cursor;
+    open towns_by_region(1);
+--     open towns_by_region;
 
     loop
-        fetch v_cursor into v_data;
-        exit when v_cursor%notfound;
+        fetch towns_by_region into v_data;
+        exit when towns_by_region%notfound;
 
-        DBMS_OUTPUT.PUT_LINE('Region name ' || v_data.name || ', code ' || v_data.CODE);
+        DBMS_OUTPUT.PUT_LINE('Town name ' || v_data.name || ', region ID ' || v_data.ID_REGION);
     end loop;
-    close v_cursor;
+    close towns_by_region;
 end;
 
 -- Выдать все специальности (неудаленные),
@@ -25,28 +27,31 @@ end;
 -- которые работают в больницах (неудаленных)
 declare
     v_data     KOTLYAROV_DM.specialities%rowtype;
-    cursor v_cursor(age_group number := null)
+    cursor doctors_by_specialty(p_age_group number := null)
         return KOTLYAROV_DM.specialities%rowtype
         is
         SELECT s.*
         FROM KOTLYAROV_DM.specialities s
                  INNER JOIN doctor_specialty ds on s.ID = ds.id_speciality
-                 INNER JOIN doctors d on ds.id_doctor = d.id AND d.deleted_at IS NULL
-                 INNER JOIN hospitals h on d.id_hospital = h.id AND h.deleted_at IS NULL
+                 INNER JOIN doctors d on ds.id_doctor = d.id
+                 INNER JOIN hospitals h on d.id_hospital = h.id
         WHERE s.deleted_at is not null
-          AND s.ID_AGE_GROUP = case when age_group is not null then age_group else s.ID_AGE_GROUP end;
+          AND d.deleted_at IS NULL
+          AND h.deleted_at IS NULL
+          AND ((p_age_group is not null and p_age_group = s.ID_AGE_GROUP) or (p_age_group is null))
+    ;
 
 begin
-    open v_cursor(1);
---     open v_cursor;
+    open doctors_by_specialty(1);
+--     open doctors_by_specialty;
 
     loop
-        fetch v_cursor into v_data;
-        exit when v_cursor%notfound;
+        fetch doctors_by_specialty into v_data;
+        exit when doctors_by_specialty%notfound;
 
         DBMS_OUTPUT.PUT_LINE('ID ' || v_data.ID || ', AGE_GROUP ' || v_data.ID_AGE_GROUP);
     end loop;
-    close v_cursor;
+    close doctors_by_specialty;
 end;
 
 -- *Выдать все больницы (неудаленные) конкретной специальности (1) с пометками о доступности, кол-ве врачей;
@@ -56,19 +61,19 @@ end;
 --
 -- status 0 = недоступно
 declare
-    type record_1 is record
-                     (
-                         id              number,
-                         id_type         number,
-                         name            varchar2(100),
-                         id_organization number,
-                         status          number,
-                         doc_count       number
-                     );
+    type hospital_info is record
+                          (
+                              id              number,
+                              id_type         number,
+                              name            varchar2(100),
+                              id_organization number,
+                              status          number,
+                              doc_count       number
+                          );
 
-    v_data record_1;
-    cursor v_cursor(hospital_status number := null)
-        return record_1
+    v_data hospital_info;
+    cursor hospitals_by_speciality(p_id_specialty number := null, p_hospital_status number := null)
+        return hospital_info
         is
         SELECT h.ID,
                h.id_type,
@@ -79,25 +84,26 @@ declare
         FROM KOTLYAROV_DM.HOSPITALS h
                  INNER JOIN KOTLYAROV_DM.doctors d on d.id_hospital = h.id
                  INNER JOIN KOTLYAROV_DM.doctor_specialty ds on d.id = ds.id_doctor
-                 INNER JOIN KOTLYAROV_DM.specialities s on ds.id_speciality = s.id AND s.ID = 1
+                 INNER JOIN KOTLYAROV_DM.specialities s on ds.id_speciality = s.id
                  INNER JOIN KOTLYAROV_DM.HOSPITAL_WORK_TIMES hwt on h.ID = hwt.id_hospital
         WHERE h.deleted_at IS NULL
-          AND h.status = case when hospital_status IS NOT NULL then hospital_status else h.STATUS end
           AND hwt.END_TIME > to_char(systimestamp, 'hh24:mi')
+          AND ((p_hospital_status is not null and p_hospital_status = h.status) or (p_hospital_status is null))
+          AND ((p_id_specialty is not null and p_id_specialty = s.ID) or (p_id_specialty is null))
         GROUP BY hwt.END_TIME, h.id_type, h.id, h.NAME, h.id_organization, h.STATUS
         ORDER BY case when h.id_type = 1 then 1 else 0 end, doc_count DESC, hwt.END_TIME DESC
     ;
 
 begin
-    open v_cursor;
+    open hospitals_by_speciality;
 
     loop
-        fetch v_cursor into v_data;
-        exit when v_cursor%notfound;
+        fetch hospitals_by_speciality into v_data;
+        exit when hospitals_by_speciality%notfound;
 
         DBMS_OUTPUT.PUT_LINE('ID ' || v_data.ID || ', name ' || v_data.name);
     end loop;
-    close v_cursor;
+    close hospitals_by_speciality;
 end;
 
 -- Выдать всех врачей (неудаленных) конкретной больницы,
@@ -105,51 +111,126 @@ end;
 -- по участку: если участок совпадает с участком пациента, то такие выше
 declare
     v_data     KOTLYAROV_DM.DOCTORS%rowtype;
-    cursor v_cursor(area varchar2 := null)
+    cursor doctors_by_hospital(p_id_hospital number := null, p_area varchar2 := null)
         return KOTLYAROV_DM.DOCTORS%ROWTYPE
         is
         SELECT d.*
         FROM KOTLYAROV_DM.DOCTORS d
                  INNER JOIN hospitals h on d.id_hospital = h.id
         WHERE d.deleted_at IS NULL
+          and ((p_id_hospital is not null and p_id_hospital = h.id) or (p_id_hospital is null))
         ORDER BY d.degree desc,
-                 CASE WHEN d.area = COALESCE(area, d.area) THEN 1 ELSE 0 END
+                 CASE WHEN ((p_area is not null and p_area = d.AREA) or (p_area is null )) THEN 1 ELSE 0 END
     ;
 
 begin
-    open v_cursor('area 2');
---     open v_cursor;
+    open doctors_by_hospital(1, 'area 2');
+--     open doctors_by_hospital(null, 'area 2');
 
     loop
-        fetch v_cursor into v_data;
-        exit when v_cursor%notfound;
+        fetch doctors_by_hospital into v_data;
+        exit when doctors_by_hospital%notfound;
 
         DBMS_OUTPUT.PUT_LINE('ID ' || v_data.ID || ', AREA ' || v_data.AREA);
     end loop;
-    close v_cursor;
+    close doctors_by_hospital;
 end;
 
 -- Выдать все талоны конкретного врача (1), не показывать талоны которые начались раньше текущего времени
 declare
     v_data     KOTLYAROV_DM.TICKETS%rowtype;
-    cursor v_cursor(filter_id_doctor number := null)
+    cursor tickets_by_doctor(filter_id_doctor number := null)
         return KOTLYAROV_DM.TICKETS%ROWTYPE
         is
         SELECT t.*
         FROM KOTLYAROV_DM.TICKETS t
-                 INNER JOIN DOCTOR_SPECIALTY ds on t.ID_DOCTOR_SPECIALITY = ds.id and ds.ID_DOCTOR = case when filter_id_doctor IS NOT NULL then filter_id_doctor else ds.ID_DOCTOR end
+                 INNER JOIN DOCTOR_SPECIALTY ds on t.ID_DOCTOR_SPECIALITY = ds.id
         WHERE t.TIME_BEGIN > current_date
+          and ((filter_id_doctor IS NOT NULL and ds.ID_DOCTOR = filter_id_doctor) or (filter_id_doctor is null))
     ;
 
 begin
-    open v_cursor(1);
---     open v_cursor;
+    open tickets_by_doctor(1);
+--     open tickets_by_doctor;
 
     loop
-        fetch v_cursor into v_data;
-        exit when v_cursor%notfound;
+        fetch tickets_by_doctor into v_data;
+        exit when tickets_by_doctor%notfound;
 
         DBMS_OUTPUT.PUT_LINE('ID ' || v_data.ID || ', AREA ' || v_data.TIME_END);
     end loop;
-    close v_cursor;
+    close tickets_by_doctor;
 end;
+
+
+-- выдать документы
+declare
+    type t_documents is table of KOTLYAROV_DM.patient_documents%rowtype;
+
+    cursor documents_by_patient(p_id_patient number, p_id_document_type number := null)
+        return  KOTLYAROV_DM.patient_documents%rowtype
+        is
+        select *
+        from KOTLYAROV_DM.PATIENT_DOCUMENTS
+        where id = p_id_patient
+          and ((p_id_document_type is not null and ID_DOCUMENT_TYPE = p_id_document_type) or
+               (p_id_document_type is null))
+    ;
+begin
+    for i in documents_by_patient(4, 2)
+        loop
+            dbms_output.put_line('Document patient ID ' || i.id || ', document type ' || i.ID_DOCUMENT_TYPE ||
+                                 ', document name ' || i.NAME);
+        end loop;
+end;
+
+
+-- выдать расписание больниц
+declare
+    type t_hospital_work_times is table of KOTLYAROV_DM.HOSPITAL_WORK_TIMES%rowtype;
+
+    cursor hospitals_work_time(p_id_hospital number := null, p_id_week_day number := null)
+        is
+        select *
+        from KOTLYAROV_DM.HOSPITAL_WORK_TIMES
+        where ((p_id_hospital is not null and p_id_hospital = ID_HOSPITAL) or (p_id_hospital is null))
+          and ((p_id_week_day is not null and p_id_week_day = ID_WEEK_DAY) or
+               (p_id_week_day is null))
+    ;
+begin
+    for i in hospitals_work_time(1)
+        loop
+            declare
+                v_work_time KOTLYAROV_DM.HOSPITAL_WORK_TIMES%rowtype;
+            begin
+                v_work_time := i;
+                dbms_output.put_line('Hospital ID ' || v_work_time.ID_HOSPITAL || ', week day ' ||
+                                     v_work_time.ID_WEEK_DAY ||
+                                     ', begin time ' || v_work_time.BEGIN_TIME || ', end time ' ||
+                                     v_work_time.END_TIME);
+            end;
+        end loop;
+end;
+
+
+-- выдать журнал пациента
+declare
+    v_patient_journals               KOTLYAROV_DM.PATIENT_JOURNALS%rowtype;
+    v_patient_journald_by_id_patient sys_refcursor;
+begin
+    open v_patient_journald_by_id_patient for
+        select *
+        from KOTLYAROV_DM.PATIENT_JOURNALS
+        where ID_PATIENT = 4;
+
+    loop
+        fetch v_patient_journald_by_id_patient into v_patient_journals;
+        exit when v_patient_journald_by_id_patient%notfound;
+
+        dbms_output.put_line('Patient ID ' || v_patient_journals.ID_PATIENT || ', ticket ID ' || v_patient_journals.ID_TICKET ||
+                             ', ticket status ' || v_patient_journals.STATUS);
+    end loop;
+
+    close v_patient_journald_by_id_patient;
+end;
+
