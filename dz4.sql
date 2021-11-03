@@ -432,7 +432,7 @@ begin
     where t.TIME_BEGIN > sysdate
       and t.id = p_id_ticket
       and wt.ID_WEEK_DAY = to_number(to_char(sysdate, 'D'))
-      and wt.END_TIME > to_char(sysdate - ((1 / 24) * 2), 'hh24:mi');
+      and wt.END_TIME > to_char(sysdate + ((1 / 24) * 2), 'hh24:mi');
 
     if (v_count != 1) then
         return false;
