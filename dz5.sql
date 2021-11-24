@@ -1,11 +1,11 @@
 -- Константы типов больниц
-create or replace package KOTLYAROV_DM.pkg_hospital_type
+create or replace package KOTLYAROV_DM.enum_hospital_utils
 as
     function c_government return number deterministic;
     function c_private return number deterministic;
 end;
 
-create or replace package body KOTLYAROV_DM.pkg_hospital_type
+create or replace package body KOTLYAROV_DM.enum_hospital_utils
 as
     function c_government return number deterministic as
     begin
@@ -13,19 +13,19 @@ as
     end;
     function c_private return number deterministic as
     begin
-        return 2;
+        return 1;
     end;
 end;
 
 -- Константы статусов записей в журнале
-create or replace package KOTLYAROV_DM.pkg_journal_status_type
+create or replace package KOTLYAROV_DM.enum_journal_status_type
 as
     function c_opened return number deterministic;
     function c_cancelled return number deterministic;
 end;
 
 -- Константы статусов записей в журнале
-create or replace package body KOTLYAROV_DM.pkg_journal_status_type
+create or replace package body KOTLYAROV_DM.enum_journal_status_type
 as
     function c_opened return number deterministic as
     begin
@@ -68,18 +68,18 @@ begin
           AND ((p_hospital_status is not null and p_hospital_status = h.status) or (p_hospital_status is null))
           AND ((p_id_specialty is not null and p_id_specialty = s.ID) or (p_id_specialty is null))
         GROUP BY hwt.END_TIME, h.id_type, h.id, h.NAME, h.id_organization, h.STATUS
-        ORDER BY case when h.id_type = KOTLYAROV_DM.pkg_hospital_type.c_private then 1 else 0 end, doc_count DESC,
+        ORDER BY case when h.id_type = KOTLYAROV_DM.enum_hospital_utils.c_private then 1 else 0 end, doc_count DESC,
                  hwt.END_TIME DESC;
 
     return v_result;
 end;
 
-create or replace package KOTLYAROV_DM.hospital_utils
+create or replace package KOTLYAROV_DM.pkg_hospital_utils
 as
-    function get_hospital_by_id(id number) return KOTLYAROV_DM.HOSPITALS%rowtype;
+    function get_hospital_by_id(hospital_id number) return KOTLYAROV_DM.HOSPITALS%rowtype;
 end;
 
-create or replace package body KOTLYAROV_DM.hospital_utils
+create or replace package body KOTLYAROV_DM.pkg_hospital_utils
 as
     function get_hospital_by_id(hospital_id number) return KOTLYAROV_DM.HOSPITALS%rowtype
     as
@@ -96,27 +96,28 @@ end;
 
 create or replace package KOTLYAROV_DM.journal_utils
 as
-    type t_journal_array is table of KOTLYAROV_DM.hospitals%rowtype;
+    type t_journal_array is table of KOTLYAROV_DM.PATIENT_JOURNALS%rowtype;
 
-    procedure insert_row(p_id_ticket number, p_id_patient number, p_status smallint);
-    procedure update_status(p_id_ticket number, p_id_patient number, p_status smallint);
+    procedure insert_row(p_id_ticket number, p_id_patient number, p_status smallint, p_commit boolean := true);
+    procedure update_status(p_id_ticket number, p_id_patient number, p_status smallint, p_commit boolean := true);
     function search_in_journal(p_id_ticket number := null, p_id_patient number := null,
                                p_status smallint := null) return t_journal_array;
 end;
 
 create or replace package body KOTLYAROV_DM.journal_utils
 as
-    procedure insert_row(p_id_ticket number, p_id_patient number, p_status smallint)
+    procedure insert_row(p_id_ticket number, p_id_patient number, p_status smallint, p_commit boolean := true)
     as
     begin
         insert into KOTLYAROV_DM.PATIENT_JOURNALS (ID_PATIENT, ID_TICKET, STATUS)
         values (p_id_patient, p_id_ticket, p_status);
 
-        -- Предпологаю что процедуру можно будет использовать в цикле и завершать транзакцию в конце
-        -- commit;
+        if (p_commit) then
+            commit;
+        end if;
     end;
 
-    procedure update_status(p_id_ticket number, p_id_patient number, p_status smallint)
+    procedure update_status(p_id_ticket number, p_id_patient number, p_status smallint, p_commit boolean := true)
     as
     begin
         update KOTLYAROV_DM.PATIENT_JOURNALS
@@ -124,8 +125,9 @@ as
         where id_patient = p_id_patient
           and id_ticket = p_id_ticket;
 
-        -- Предпологаю что процедуру можно будет использовать в цикле и завершать транзакцию в конце
-        -- commit;
+        if (p_commit) then
+            commit;
+        end if;
     end;
 
     function search_in_journal(p_id_ticket number := null, p_id_patient number := null, p_status smallint := null)
@@ -142,7 +144,86 @@ as
 
         return a_result;
     end;
+end;
 
+create or replace package KOTLYAROV_DM.ticket_utils
+as
+    procedure update_ticket_closed_status(p_id_ticket number, p_closed boolean, p_commit boolean := true);
+end;
+
+create or replace package body KOTLYAROV_DM.ticket_utils
+as
+    procedure update_ticket_closed_status(p_id_ticket number, p_closed boolean, p_commit boolean := true)
+    as
+        v_closed number;
+    begin
+        v_closed := case when p_closed then 1 else 0 end;
+
+        update KOTLYAROV_DM.tickets
+        set CLOSED = v_closed
+        where ID = p_id_ticket;
+
+        if (p_commit) then
+            commit;
+        end if;
+    end;
+end;
+
+create or replace package KOTLYAROV_DM.business_logic_utils
+as
+    function is_patient_suit_for_ticket(p_id_patient number, p_id_ticket number) return boolean;
+    function can_cancel_requested_ticket(p_id_ticket number) return boolean;
+end;
+
+create or replace package body KOTLYAROV_DM.business_logic_utils
+as
+    function is_patient_suit_for_ticket(p_id_patient number, p_id_ticket number) return boolean
+    as
+        v_count number;
+    begin
+        select count(*)
+        into v_count
+        from KOTLYAROV_DM.TICKETS t
+                 INNER JOIN KOTLYAROV_DM.PATIENTS p on p.ID = p_id_patient
+                 INNER JOIN KOTLYAROV_DM.DOCTOR_SPECIALTY ds on ds.ID = t.ID_DOCTOR_SPECIALITY
+                 INNER JOIN KOTLYAROV_DM.SPECIALITIES s on s.ID = ds.ID_SPECIALITY
+                 INNER JOIN KOTLYAROV_DM.DOCTORS d on d.ID = ds.ID_DOCTOR
+                 INNER JOIN KOTLYAROV_DM.HOSPITALS h on h.ID = d.ID_HOSPITAL
+                 INNER JOIN KOTLYAROV_DM.AGE_GROUPS ag on ag.ID = s.ID_AGE_GROUP
+                 INNER JOIN KOTLYAROV_DM.SPECIALITY_GENDER sg on sg.ID_SPECIALITY = s.ID
+                 INNER JOIN KOTLYAROV_DM.PATIENT_DOCUMENTS pd on pd.ID_PATIENT = p_id_patient
+        WHERE t.id = p_id_ticket
+          and t.CLOSED = 0
+          AND p.ID_GENDER = sg.ID_GENDER
+          and t.TIME_BEGIN > sysdate
+          and d.DELETED_AT is null
+          and s.DELETED_AT is null
+          and h.DELETED_AT is null
+          and pd.ID_DOCUMENT_TYPE = 4 -- ОМС
+          AND add_months(p.BIRTHDATE, ag.AGE_BEGIN * 12) <= sysdate
+          AND add_months(p.BIRTHDATE, ag.AGE_END * 12) > sysdate;
+
+        return v_count = 1;
+    end;
+
+    function can_cancel_requested_ticket(p_id_ticket number) return boolean
+    as
+        v_count number;
+    begin
+        select count(*)
+        into v_count
+        from KOTLYAROV_DM.TICKETS t
+                 INNER JOIN KOTLYAROV_DM.DOCTOR_SPECIALTY ds on ds.ID = t.ID_DOCTOR_SPECIALITY
+                 INNER JOIN KOTLYAROV_DM.SPECIALITIES s on s.ID = ds.ID_SPECIALITY
+                 INNER JOIN KOTLYAROV_DM.DOCTORS d on d.ID = ds.ID_DOCTOR
+                 INNER JOIN KOTLYAROV_DM.HOSPITAL_WORK_TIMES wt on wt.ID_HOSPITAL = d.ID_HOSPITAL
+        where t.TIME_BEGIN > sysdate
+          and t.id = p_id_ticket
+          and wt.ID_WEEK_DAY = to_number(to_char(sysdate, 'D'))
+          and wt.END_TIME > to_char(sysdate + ((1 / 24) * 2), 'hh24:mi');
+
+        return v_count = 1;
+    end;
 end;
 
 -- Создать метод записи с проверками пациента
@@ -153,64 +234,52 @@ create or replace function KOTLYAROV_DM.request(
 )
     return boolean
 as
-    v_count    number;
     a_journals KOTLYAROV_DM.journal_utils.t_journal_array;
 begin
     a_journals := KOTLYAROV_DM.journal_utils.search_in_journal(
             p_id_patient => p_id_patient,
             p_id_ticket => p_id_ticket,
-            p_status => KOTLYAROV_DM.PKG_JOURNAL_STATUS_TYPE.c_opened
+            p_status => KOTLYAROV_DM.enum_journal_status_type.c_opened
         );
 
     if (a_journals.COUNT != 0) then
         return false;
     end if;
 
-    select count(t.ID)
-    into v_count
-    from KOTLYAROV_DM.TICKETS t
-             INNER JOIN KOTLYAROV_DM.PATIENTS p on p.ID = p_id_patient
-             INNER JOIN KOTLYAROV_DM.DOCTOR_SPECIALTY ds on ds.ID = t.ID_DOCTOR_SPECIALITY
-             INNER JOIN KOTLYAROV_DM.SPECIALITIES s on s.ID = ds.ID_SPECIALITY
-             INNER JOIN KOTLYAROV_DM.DOCTORS d on d.ID = ds.ID_DOCTOR
-             INNER JOIN KOTLYAROV_DM.HOSPITALS h on h.ID = d.ID_HOSPITAL
-             INNER JOIN KOTLYAROV_DM.AGE_GROUPS ag on ag.ID = s.ID_AGE_GROUP
-             INNER JOIN KOTLYAROV_DM.SPECIALITY_GENDER sg on sg.ID_SPECIALITY = s.ID
-             INNER JOIN KOTLYAROV_DM.PATIENT_DOCUMENTS pd on pd.ID_PATIENT = p_id_patient
-    WHERE t.id = p_id_ticket
-      and t.CLOSED = 0
-      AND p.ID_GENDER = sg.ID_GENDER
-      and t.TIME_BEGIN > sysdate
-      and d.DELETED_AT is null
-      and s.DELETED_AT is null
-      and h.DELETED_AT is null
-      and pd.ID_DOCUMENT_TYPE = 4 -- ОМС
-      AND add_months(p.BIRTHDATE, ag.AGE_BEGIN * 12) <= sysdate
-      AND add_months(p.BIRTHDATE, ag.AGE_END * 12) > sysdate;
-
-    if (v_count = 1) then
-        if (KOTLYAROV_DM.journal_utils.search_in_journal(
-                    p_id_ticket => p_id_ticket,
-                    p_id_patient => p_id_patient
-                ).COUNT = 1) then
-            KOTLYAROV_DM.journal_utils.update_status(
-                    p_id_ticket => p_id_ticket,
-                    p_id_patient => p_id_patient,
-                    p_status => KOTLYAROV_DM.PKG_JOURNAL_STATUS_TYPE.c_opened
-                );
-        else
-            KOTLYAROV_DM.journal_utils.insert_row(
-                    p_id_ticket => p_id_ticket,
-                    p_id_patient => p_id_patient,
-                    p_status => KOTLYAROV_DM.PKG_JOURNAL_STATUS_TYPE.c_opened
-                );
-        end if;
-
-        commit;
-        return true;
+    if (not KOTLYAROV_DM.business_logic_utils.is_patient_suit_for_ticket(
+            p_id_patient => p_id_patient,
+            p_id_ticket => p_id_ticket
+        )) then
+        return false;
     end if;
 
-    return false;
+    if (KOTLYAROV_DM.journal_utils.search_in_journal(
+                p_id_ticket => p_id_ticket,
+                p_id_patient => p_id_patient
+            ).COUNT = 1) then
+        KOTLYAROV_DM.journal_utils.update_status(
+                p_id_ticket => p_id_ticket,
+                p_id_patient => p_id_patient,
+                p_status => KOTLYAROV_DM.enum_journal_status_type.c_opened,
+                p_commit => false
+            );
+    else
+        KOTLYAROV_DM.journal_utils.insert_row(
+                p_id_ticket => p_id_ticket,
+                p_id_patient => p_id_patient,
+                p_status => KOTLYAROV_DM.enum_journal_status_type.c_opened,
+                p_commit => false
+            );
+    end if;
+
+    KOTLYAROV_DM.ticket_utils.update_ticket_closed_status(
+            p_id_ticket => p_id_ticket,
+            p_closed => true,
+            p_commit => false
+        );
+
+    commit;
+    return true;
 end;
 
 declare
@@ -236,47 +305,36 @@ create or replace function KOTLYAROV_DM.cancel(
 )
     return boolean
 as
-    v_count number;
     a_journals KOTLYAROV_DM.journal_utils.t_journal_array;
 begin
     a_journals := KOTLYAROV_DM.journal_utils.search_in_journal(
             p_id_patient => p_id_patient,
             p_id_ticket => p_id_ticket,
-            p_status => KOTLYAROV_DM.PKG_JOURNAL_STATUS_TYPE.c_opened
+            p_status => KOTLYAROV_DM.enum_journal_status_type.c_opened
         );
 
     if (a_journals.COUNT != 1) then
         return false;
     end if;
 
-    select count(*)
-    into v_count
-    from KOTLYAROV_DM.TICKETS t
-             INNER JOIN KOTLYAROV_DM.DOCTOR_SPECIALTY ds on ds.ID = t.ID_DOCTOR_SPECIALITY
-             INNER JOIN KOTLYAROV_DM.SPECIALITIES s on s.ID = ds.ID_SPECIALITY
-             INNER JOIN KOTLYAROV_DM.DOCTORS d on d.ID = ds.ID_DOCTOR
-             INNER JOIN KOTLYAROV_DM.HOSPITAL_WORK_TIMES wt on wt.ID_HOSPITAL = d.ID_HOSPITAL
-    where t.TIME_BEGIN > sysdate
-      and t.id = p_id_ticket
-      and wt.ID_WEEK_DAY = to_number(to_char(sysdate, 'D'))
-      and wt.END_TIME > to_char(sysdate + ((1 / 24) * 2), 'hh24:mi');
-
-    if (v_count != 1) then
+    if (not KOTLYAROV_DM.business_logic_utils.can_cancel_requested_ticket(p_id_ticket)) then
         return false;
     end if;
 
     KOTLYAROV_DM.journal_utils.update_status(
-        p_id_ticket => p_id_ticket,
-        p_id_patient => p_id_patient,
-        p_status => KOTLYAROV_DM.PKG_JOURNAL_STATUS_TYPE.c_cancelled
-    );
+            p_id_ticket => p_id_ticket,
+            p_id_patient => p_id_patient,
+            p_status => KOTLYAROV_DM.enum_journal_status_type.c_cancelled,
+            p_commit => false
+        );
 
-    update KOTLYAROV_DM.TICKETS
-    set CLOSED = 0
-    where id = p_id_ticket;
+    KOTLYAROV_DM.ticket_utils.update_ticket_closed_status(
+            p_id_ticket => p_id_ticket,
+            p_closed => false,
+            p_commit => false
+        );
 
     commit;
-
     return true;
 end;
 
@@ -293,46 +351,4 @@ begin
     else
         DBMS_OUTPUT.PUT_LINE('Error cancelling');
     end if;
-end;
-
-
--- создать два пакета (можно не связанные с проектом)
--- вызывающие друг друга.
--- понять как такое компилировать в одном файле скрипта
-create or replace package pkg_test1
-as
-    procedure p(p_message varchar2);
-    procedure test;
-end;
-
-create or replace package body pkg_test1
-as
-    procedure p(p_message varchar2) as
-    begin
-        DBMS_OUTPUT.PUT_LINE(p_message);
-    end;
-
-    procedure test as
-    begin
-        KOTLYAROV_DM.PKG_TEST2.P('call from pkg_test1');
-    end test;
-end;
-
-create or replace package pkg_test2
-as
-    procedure p(p_message varchar2);
-    procedure test;
-end;
-
-create or replace package body pkg_test2
-as
-    procedure p(p_message varchar2) as
-    begin
-        DBMS_OUTPUT.PUT_LINE(p_message);
-    end;
-
-    procedure test as
-    begin
-        KOTLYAROV_DM.PKG_TEST2.P('call from pkg_test2');
-    end test;
 end;
