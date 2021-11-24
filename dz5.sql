@@ -97,9 +97,11 @@ end;
 create or replace package KOTLYAROV_DM.journal_utils
 as
     type t_journal_array is table of KOTLYAROV_DM.PATIENT_JOURNALS%rowtype;
+    record_not_found exception;
 
     procedure insert_row(p_id_ticket number, p_id_patient number, p_status smallint, p_commit boolean := true);
     procedure update_status(p_id_ticket number, p_id_patient number, p_status smallint, p_commit boolean := true);
+    procedure exc_update_status(p_id_ticket number, p_id_patient number, p_status smallint, p_commit boolean := true);
     function search_in_journal(p_id_ticket number := null, p_id_patient number := null,
                                p_status smallint := null) return t_journal_array;
 end;
@@ -115,6 +117,19 @@ as
         if (p_commit) then
             commit;
         end if;
+
+    exception
+        when others then
+            KOTLYAROV_DM.ADD_SYSTEM_LOG(
+                        $$plsql_unit_owner || '.' || $$plsql_unit || '.' || utl_call_stack.subprogram(1)(2),
+                        '{"error":"' || sqlerrm
+                            || '","p_id_ticket":"' || p_id_ticket
+                            || '","p_id_patient":"' || p_id_patient
+                            || '","p_status":"' || p_status
+                            || '","backtrace":"' || dbms_utility.format_error_backtrace()
+                            || '"}',
+                        'error'
+                );
     end;
 
     procedure update_status(p_id_ticket number, p_id_patient number, p_status smallint, p_commit boolean := true)
@@ -127,6 +142,24 @@ as
 
         if (p_commit) then
             commit;
+        end if;
+    end;
+
+    -- внедрить например в одну из check функций при записи
+    procedure exc_update_status(p_id_ticket number, p_id_patient number, p_status smallint, p_commit boolean := true)
+    as
+    begin
+        update KOTLYAROV_DM.PATIENT_JOURNALS
+        set status = p_status
+        where id_patient = p_id_patient
+          and id_ticket = p_id_ticket;
+
+        if (p_commit) then
+            commit;
+        end if;
+
+        if (sql%rowcount = 0) then
+            raise KOTLYAROV_DM.JOURNAL_UTILS.record_not_found;
         end if;
     end;
 
@@ -243,6 +276,15 @@ begin
         );
 
     if (a_journals.COUNT != 0) then
+        KOTLYAROV_DM.ADD_SYSTEM_LOG(
+                    $$plsql_unit_owner || '.' || $$plsql_unit,
+                    '{"error":"' || 'Ticket already in journal'
+                        || '","p_id_ticket":"' || p_id_ticket
+                        || '","p_id_patient":"' || p_id_patient
+                        || '","backtrace":"' || dbms_utility.format_error_backtrace()
+                        || '"}',
+                    'warning'
+            );
         return false;
     end if;
 
@@ -250,6 +292,15 @@ begin
             p_id_patient => p_id_patient,
             p_id_ticket => p_id_ticket
         )) then
+        KOTLYAROV_DM.ADD_SYSTEM_LOG(
+                    $$plsql_unit_owner || '.' || $$plsql_unit,
+                    '{"error":"' || 'Patient is not suitable for ticket'
+                        || '","p_id_ticket":"' || p_id_ticket
+                        || '","p_id_patient":"' || p_id_patient
+                        || '","backtrace":"' || dbms_utility.format_error_backtrace()
+                        || '"}',
+                    'debug'
+            );
         return false;
     end if;
 
@@ -314,10 +365,28 @@ begin
         );
 
     if (a_journals.COUNT != 1) then
+        KOTLYAROV_DM.ADD_SYSTEM_LOG(
+                    $$plsql_unit_owner || '.' || $$plsql_unit,
+                    '{"error":"' || 'Journal record not found'
+                        || '","p_id_ticket":"' || p_id_ticket
+                        || '","p_id_patient":"' || p_id_patient
+                        || '","backtrace":"' || dbms_utility.format_error_backtrace()
+                        || '"}',
+                    'warning'
+            );
         return false;
     end if;
 
     if (not KOTLYAROV_DM.business_logic_utils.can_cancel_requested_ticket(p_id_ticket)) then
+        KOTLYAROV_DM.ADD_SYSTEM_LOG(
+                    $$plsql_unit_owner || '.' || $$plsql_unit,
+                    '{"error":"' || 'Ticket request can not be cancelled'
+                        || '","p_id_ticket":"' || p_id_ticket
+                        || '","p_id_patient":"' || p_id_patient
+                        || '","backtrace":"' || dbms_utility.format_error_backtrace()
+                        || '"}',
+                    'debug'
+            );
         return false;
     end if;
 
