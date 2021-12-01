@@ -76,27 +76,35 @@ end;
 
 create or replace package KOTLYAROV_DM.pkg_hospital_utils
 as
-    function get_hospital_by_id(hospital_id number) return KOTLYAROV_DM.HOSPITALS%rowtype;
+    function get_hospital_by_id(hospital_id number) return KOTLYAROV_DM.T_HOSPITAL;
 end;
 
 create or replace package body KOTLYAROV_DM.pkg_hospital_utils
 as
-    function get_hospital_by_id(hospital_id number) return KOTLYAROV_DM.HOSPITALS%rowtype
+    function get_hospital_by_id(hospital_id number) return KOTLYAROV_DM.T_HOSPITAL
     as
-        v_result KOTLYAROV_DM.HOSPITALS%rowtype;
+        v_result KOTLYAROV_DM.T_HOSPITAL;
     begin
-        select *
+        select KOTLYAROV_DM.T_HOSPITAL(
+                       id => h.id,
+                       deleted_at => h.deleted_at,
+                       name => h.name,
+                       id_organization => h.id_organization,
+                       status => h.status,
+                       id_type => h.id_type
+                   )
         into v_result
-        from KOTLYAROV_DM.HOSPITALS
-        where id = hospital_id;
+        from KOTLYAROV_DM.HOSPITALS H
+        where id = hospital_id
+          and DELETED_AT is null;
 
         return v_result;
     end;
 end;
 
-create or replace package KOTLYAROV_DM.journal_utils
+create or replace package KOTLYAROV_DM.pkg_journal_utils
 as
-    type t_journal_array is table of KOTLYAROV_DM.PATIENT_JOURNALS%rowtype;
+    type t_journal_array is table of KOTLYAROV_DM.T_PATIENT_JOURNAL;
     record_not_found exception;
 
     procedure insert_row(p_id_ticket number, p_id_patient number, p_status smallint, p_commit boolean := true);
@@ -106,10 +114,11 @@ as
                                p_status smallint := null) return t_journal_array;
 end;
 
-create or replace package body KOTLYAROV_DM.journal_utils
+create or replace package body KOTLYAROV_DM.pkg_journal_utils
 as
     procedure insert_row(p_id_ticket number, p_id_patient number, p_status smallint, p_commit boolean := true)
     as
+        pragma autonomous_transaction;
     begin
         insert into KOTLYAROV_DM.PATIENT_JOURNALS (ID_PATIENT, ID_TICKET, STATUS)
         values (p_id_patient, p_id_ticket, p_status);
@@ -134,6 +143,7 @@ as
 
     procedure update_status(p_id_ticket number, p_id_patient number, p_status smallint, p_commit boolean := true)
     as
+        pragma autonomous_transaction;
     begin
         update KOTLYAROV_DM.PATIENT_JOURNALS
         set status = p_status
@@ -148,6 +158,7 @@ as
     -- внедрить например в одну из check функций при записи
     procedure exc_update_status(p_id_ticket number, p_id_patient number, p_status smallint, p_commit boolean := true)
     as
+        pragma autonomous_transaction;
     begin
         update KOTLYAROV_DM.PATIENT_JOURNALS
         set status = p_status
@@ -159,7 +170,7 @@ as
         end if;
 
         if (sql%rowcount = 0) then
-            raise KOTLYAROV_DM.JOURNAL_UTILS.record_not_found;
+            raise KOTLYAROV_DM.pkg_journal_utils.record_not_found;
         end if;
     end;
 
@@ -179,16 +190,18 @@ as
     end;
 end;
 
-create or replace package KOTLYAROV_DM.ticket_utils
+create or replace package KOTLYAROV_DM.pkg_ticket_utils
 as
     procedure update_ticket_closed_status(p_id_ticket number, p_closed boolean, p_commit boolean := true);
 end;
 
-create or replace package body KOTLYAROV_DM.ticket_utils
+create or replace package body KOTLYAROV_DM.pkg_ticket_utils
 as
     procedure update_ticket_closed_status(p_id_ticket number, p_closed boolean, p_commit boolean := true)
     as
         v_closed number;
+
+        pragma autonomous_transaction;
     begin
         v_closed := case when p_closed then 1 else 0 end;
 
@@ -202,13 +215,13 @@ as
     end;
 end;
 
-create or replace package KOTLYAROV_DM.business_logic_utils
+create or replace package KOTLYAROV_DM.pkg_business_logic_utils
 as
     function is_patient_suit_for_ticket(p_id_patient number, p_id_ticket number) return boolean;
     function can_cancel_requested_ticket(p_id_ticket number) return boolean;
 end;
 
-create or replace package body KOTLYAROV_DM.business_logic_utils
+create or replace package body KOTLYAROV_DM.pkg_business_logic_utils
 as
     function is_patient_suit_for_ticket(p_id_patient number, p_id_ticket number) return boolean
     as
@@ -265,11 +278,11 @@ create or replace function KOTLYAROV_DM.request(
     p_id_patient number,
     p_id_ticket number
 )
-    return boolean
+    return KOTLYAROV_DM.t_exec_status
 as
-    a_journals KOTLYAROV_DM.journal_utils.t_journal_array;
+    a_journals KOTLYAROV_DM.pkg_journal_utils.t_journal_array;
 begin
-    a_journals := KOTLYAROV_DM.journal_utils.search_in_journal(
+    a_journals := KOTLYAROV_DM.pkg_journal_utils.search_in_journal(
             p_id_patient => p_id_patient,
             p_id_ticket => p_id_ticket,
             p_status => KOTLYAROV_DM.enum_journal_status_type.c_opened
@@ -285,10 +298,13 @@ begin
                         || '"}',
                     'warning'
             );
-        return false;
+        return KOTLYAROV_DM.t_exec_status(
+                error => 1,
+                message => 'Ticket already in journal'
+            );
     end if;
 
-    if (not KOTLYAROV_DM.business_logic_utils.is_patient_suit_for_ticket(
+    if (not KOTLYAROV_DM.pkg_business_logic_utils.is_patient_suit_for_ticket(
             p_id_patient => p_id_patient,
             p_id_ticket => p_id_ticket
         )) then
@@ -301,21 +317,24 @@ begin
                         || '"}',
                     'debug'
             );
-        return false;
+        return KOTLYAROV_DM.t_exec_status(
+                error => 2,
+                message => 'Patient is not suitable for ticket'
+            );
     end if;
 
-    if (KOTLYAROV_DM.journal_utils.search_in_journal(
+    if (KOTLYAROV_DM.pkg_journal_utils.search_in_journal(
                 p_id_ticket => p_id_ticket,
                 p_id_patient => p_id_patient
             ).COUNT = 1) then
-        KOTLYAROV_DM.journal_utils.update_status(
+        KOTLYAROV_DM.pkg_journal_utils.update_status(
                 p_id_ticket => p_id_ticket,
                 p_id_patient => p_id_patient,
                 p_status => KOTLYAROV_DM.enum_journal_status_type.c_opened,
                 p_commit => false
             );
     else
-        KOTLYAROV_DM.journal_utils.insert_row(
+        KOTLYAROV_DM.pkg_journal_utils.insert_row(
                 p_id_ticket => p_id_ticket,
                 p_id_patient => p_id_patient,
                 p_status => KOTLYAROV_DM.enum_journal_status_type.c_opened,
@@ -323,28 +342,31 @@ begin
             );
     end if;
 
-    KOTLYAROV_DM.ticket_utils.update_ticket_closed_status(
+    KOTLYAROV_DM.pkg_ticket_utils.update_ticket_closed_status(
             p_id_ticket => p_id_ticket,
             p_closed => true,
             p_commit => false
         );
 
     commit;
-    return true;
+        return KOTLYAROV_DM.t_exec_status(
+                error => 0,
+                message => ''
+            );
 end;
 
 declare
-    v_result boolean;
+    v_result KOTLYAROV_DM.t_exec_status;
 begin
     v_result := KOTLYAROV_DM.REQUEST(
             p_id_patient => 4,
             p_id_ticket => 2480
         );
 
-    if (v_result) then
+    if (v_result.ERROR = 0) then
         DBMS_OUTPUT.PUT_LINE('All ok');
     else
-        DBMS_OUTPUT.PUT_LINE('Patient not suitable for this ticket');
+        DBMS_OUTPUT.PUT_LINE('Error: ' || v_result.MESSAGE);
     end if;
 end;
 
@@ -354,11 +376,11 @@ create or replace function KOTLYAROV_DM.cancel(
     p_id_patient number,
     p_id_ticket number
 )
-    return boolean
+    return KOTLYAROV_DM.t_exec_status
 as
-    a_journals KOTLYAROV_DM.journal_utils.t_journal_array;
+    a_journals KOTLYAROV_DM.pkg_journal_utils.t_journal_array;
 begin
-    a_journals := KOTLYAROV_DM.journal_utils.search_in_journal(
+    a_journals := KOTLYAROV_DM.pkg_journal_utils.search_in_journal(
             p_id_patient => p_id_patient,
             p_id_ticket => p_id_ticket,
             p_status => KOTLYAROV_DM.enum_journal_status_type.c_opened
@@ -374,10 +396,13 @@ begin
                         || '"}',
                     'warning'
             );
-        return false;
+        return KOTLYAROV_DM.t_exec_status(
+                error => 1,
+                message => 'Journal record not found'
+            );
     end if;
 
-    if (not KOTLYAROV_DM.business_logic_utils.can_cancel_requested_ticket(p_id_ticket)) then
+    if (not KOTLYAROV_DM.pkg_business_logic_utils.can_cancel_requested_ticket(p_id_ticket)) then
         KOTLYAROV_DM.ADD_SYSTEM_LOG(
                     $$plsql_unit_owner || '.' || $$plsql_unit,
                     '{"error":"' || 'Ticket request can not be cancelled'
@@ -387,37 +412,43 @@ begin
                         || '"}',
                     'debug'
             );
-        return false;
+        return KOTLYAROV_DM.t_exec_status(
+                error => 1,
+                message => 'Ticket request can not be cancelled'
+            );
     end if;
 
-    KOTLYAROV_DM.journal_utils.update_status(
+    KOTLYAROV_DM.pkg_journal_utils.update_status(
             p_id_ticket => p_id_ticket,
             p_id_patient => p_id_patient,
             p_status => KOTLYAROV_DM.enum_journal_status_type.c_cancelled,
             p_commit => false
         );
 
-    KOTLYAROV_DM.ticket_utils.update_ticket_closed_status(
+    KOTLYAROV_DM.pkg_ticket_utils.update_ticket_closed_status(
             p_id_ticket => p_id_ticket,
             p_closed => false,
             p_commit => false
         );
 
     commit;
-    return true;
+        return KOTLYAROV_DM.t_exec_status(
+                error => 0,
+                message => ''
+            );
 end;
 
 declare
-    v_result boolean;
+    v_result KOTLYAROV_DM.t_exec_status;
 begin
     v_result := KOTLYAROV_DM.CANCEL(
             p_id_patient => 4,
             p_id_ticket => 2480
         );
 
-    if (v_result) then
+    if (v_result.ERROR = 0) then
         DBMS_OUTPUT.PUT_LINE('All ok');
     else
-        DBMS_OUTPUT.PUT_LINE('Error cancelling');
+        DBMS_OUTPUT.PUT_LINE('Error: ' || v_result.MESSAGE);
     end if;
 end;
