@@ -4,11 +4,13 @@ create or replace type KOTLYAROV_DM.t_specialty as object
     id           number,
     deleted_at   date,
     id_age_group number,
+    id_integration_specialty number,
 
     constructor function t_specialty(
         id number,
         deleted_at date,
-        id_age_group number
+        id_age_group number,
+        id_integration_specialty number
     ) return self as result
 );
 
@@ -18,12 +20,14 @@ create or replace type body KOTLYAROV_DM.t_specialty as
     constructor function t_specialty(
         id number,
         deleted_at date,
-        id_age_group number
+        id_age_group number,
+        id_integration_specialty number
     ) return self as result as
     begin
         self.id := id;
         self.deleted_at := deleted_at;
         self.id_age_group := id_age_group;
+        self.id_integration_specialty := id_integration_specialty;
 
         return;
     end;
@@ -164,6 +168,8 @@ create or replace type KOTLYAROV_DM.t_doctor as object
     qualification varchar2(255),
     salary        number,
     id_hospital   number,
+    id_integration_doctor number,
+
     constructor function t_doctor(
         id number,
         deleted_at date,
@@ -171,7 +177,9 @@ create or replace type KOTLYAROV_DM.t_doctor as object
         degree numeric,
         qualification varchar2,
         salary number,
-        id_hospital number
+        id_hospital number,
+        id_integration_specialty number,
+        id_integration_doctor number
     ) return self as result
 );
 
@@ -185,7 +193,8 @@ create or replace type body KOTLYAROV_DM.t_doctor as
         degree numeric,
         qualification varchar2,
         salary number,
-        id_hospital number
+        id_hospital number,
+        id_integration_doctor number
     ) return self as result as
     begin
         self.id := id;
@@ -195,6 +204,7 @@ create or replace type body KOTLYAROV_DM.t_doctor as
         self.qualification := qualification;
         self.salary := salary;
         self.id_hospital := id_hospital;
+        self.id_integration_doctor := id_integration_doctor;
 
         return;
     end;
@@ -244,6 +254,7 @@ create or replace type KOTLYAROV_DM.t_hospital as object
     id_organization number,
     status          smallint,
     id_type         number,
+    id_integration_hospital number,
 
     constructor function t_hospital(
         id number,
@@ -251,7 +262,8 @@ create or replace type KOTLYAROV_DM.t_hospital as object
         name varchar2,
         id_organization number,
         status smallint,
-        id_type number
+        id_type number,
+        id_integration_hospital number
     ) return self as result
 );
 
@@ -264,13 +276,15 @@ create or replace type body KOTLYAROV_DM.t_hospital as
         name varchar2,
         id_organization number,
         status smallint,
-        id_type number
+        id_type number,
+        id_integration_hospital number
     ) return self as result as
     begin
         self.id := id;
         self.deleted_at := deleted_at;
         self.name := name;
         self.id_organization := id_organization;
+        self.id_integration_hospital := id_integration_hospital;
 
         return;
     end;

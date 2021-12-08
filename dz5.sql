@@ -91,7 +91,8 @@ as
                        name => h.name,
                        id_organization => h.id_organization,
                        status => h.status,
-                       id_type => h.id_type
+                       id_type => h.id_type,
+                       id_integration_hospital => h.ID_INTEGRATION_HOSPITAL
                    )
         into v_result
         from KOTLYAROV_DM.HOSPITALS H
@@ -349,10 +350,10 @@ begin
         );
 
     commit;
-        return KOTLYAROV_DM.t_exec_status(
-                error => 0,
-                message => ''
-            );
+    return KOTLYAROV_DM.t_exec_status(
+            error => 0,
+            message => ''
+        );
 end;
 
 declare
@@ -432,10 +433,10 @@ begin
         );
 
     commit;
-        return KOTLYAROV_DM.t_exec_status(
-                error => 0,
-                message => ''
-            );
+    return KOTLYAROV_DM.t_exec_status(
+            error => 0,
+            message => ''
+        );
 end;
 
 declare
